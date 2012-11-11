@@ -3,15 +3,15 @@ lpaq1_stream
 
 There [lpaq1](http://encode.ru/threads/874-lpaq1-is-here) - simplified PAQ compressor.
 
-I added some funny modes to it to play with compression:
+Here are some funny modes to it to play with the compression:
 
 * lpaq1_stream: Other archive format, suitable for intermediate flushing;
 * lpaq1_stream: "Preloading" of other archives to assist compression of little files;
 * lpaq1: Removed filesize restriction (now can [de]compress to/from pipe);
-* lpaq1: "Stream decompress mode" to extract files with unknown filesize (with some garbade in the end);
+* lpaq1: "Stream decompress mode" to extract files with unknown filesize (with some garbade at the end);
 * lpaq1: Fuzz decompression (deliverately misdecompress files to see broken content);
 * lpaq1: Autonomous mode (after normal decompression, keep decompressing ad infinum from random data);
-* lpaq1: Guess mode (output only predicted bits. Lets you to see which parts of file is the most compressible).
+* lpaq1: Guess mode (output bits based only on prediction. Lets you to see which parts of file are more compressible).
 
 Demos
 ---
