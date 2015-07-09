@@ -508,7 +508,7 @@ Mixer::~Mixer() {
 //     checksum and should not be modified.
 
 template <int B>
-class HashTable {
+struct HashTable {
   U8* t;  // table: 1 element = B bytes: checksum priority data data
   const int N;  // size in bytes
   void* orig_address;
@@ -723,6 +723,7 @@ struct Predictor {
 public:
   Predictor(int MEM);
   Predictor(const Predictor& p);
+  void rebase_pointers(const Predictor& p);
   const Predictor& operator= (const Predictor& p);
   ~Predictor();
   int p() const {assert(pr>=0 && pr<4096); return pr;}
@@ -731,7 +732,6 @@ public:
 
 Predictor::Predictor(int MEM /*Global memory usage = 3*MEM bytes (1<<20 .. 1<<29) */) :
     MEM(MEM),
-    t0{0},
     t(MEM*2),
     c0(1),
     c4(0),
@@ -744,6 +744,17 @@ Predictor::Predictor(int MEM /*Global memory usage = 3*MEM bytes (1<<20 .. 1<<29
     pr(2048) {
         memset(t0, 0, sizeof(t0));
         memset(h, 0, sizeof(h));
+}
+
+void Predictor::rebase_pointers(const Predictor& p) {
+  for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
+    if (p.cp[i] >= p.t0 && p.cp[i] < p.t0 + sizeof(t0)) {
+        cp[i] = t0 + (p.cp[i] - p.t0);
+    } else 
+    if (p.cp[i] >= p.t.t && p.cp[i] < p.t.t + (MEM*2+16*4)) {
+        cp[i] = t.t + (p.cp[i] - p.t.t);
+    }
+  }
 }
 
 Predictor::Predictor(const Predictor& p) :
@@ -759,14 +770,14 @@ Predictor::Predictor(const Predictor& p) :
     mm(p.mm),
     pr(p.pr) {
       memmove(t0, p.t0, sizeof(t0));
-      for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
-        cp[i] = t0 + (p.cp[i] - p.t0);
-      }
+      rebase_pointers(p);
       memmove(h, p.h, sizeof(h));
 }
 
 const Predictor& Predictor::operator= (const Predictor& p) {
   if (&p==this) return *this;
+  
+  assert(p.MEM == MEM);
   
   t = p.t;
   c0 = p.c0;
@@ -782,9 +793,7 @@ const Predictor& Predictor::operator= (const Predictor& p) {
   pr = p.pr;
   
   memmove(t0, p.t0, sizeof(t0));
-  for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
-    cp[i] = t0 + (p.cp[i] - p.t0);
-  }
+  rebase_pointers(p);
   memmove(h, p.h, sizeof(h));
   
   return *this;
@@ -1120,8 +1129,96 @@ void do_decompress(FILE* in, FILE* out, Predictor& predictor) {
     }
 }
 
-int main(int argc, char **argv) {
 
+int measure_entropy(const char* buf, int l, Predictor& p) {
+  int s = 0;
+  
+  for (int j=0; j<l; ++j) {
+    for (int i=7; i>=0; --i) {
+      int bit = (buf[j]>>i)&1;
+      int prediction = p.p();
+      
+      if (bit) {
+         s += 4096-prediction;
+      } else {
+         s += prediction;
+      }
+    
+      p.update(bit);
+    }
+  }
+  return s;
+}
+
+void do_analyse(FILE* in, FILE* out, const char* modes, Predictor& predictor, int MEM) {
+  struct {
+    Predictor* template_;
+    Predictor* active;
+    int s;
+    char mode;
+    bool needs_reset;
+  } info[16];
+  
+  memset(info, 0, sizeof(info));
+  
+  
+  #define ITERATE_MODES   for (int i=0; i<sizeof(info)/sizeof(*info) && modes[i]; ++i) 
+  ITERATE_MODES {
+    auto & in = info[i];
+    in.mode = modes[i];
+    in.s = 0;
+    switch(in.mode) {
+      case 'P':
+        in.template_ = new Predictor(predictor);
+        break;
+      case 'p':
+        in.template_ = &predictor;
+        break;
+      case 'c':
+      case 'C':
+        in.template_ = new Predictor(MEM);
+        break;
+      default:
+        assert(!"Invalid measure mode");
+    }
+    switch (in.mode) {
+      case 'p':
+      case 'c':
+        in.active = new Predictor(MEM);
+        in.needs_reset = true;
+        break;
+      case 'P':
+      case 'C':
+        in.active = in.template_;
+        in.needs_reset = false;
+        break;
+    }
+  }
+  
+  while(!feof(in)) { 
+    char line[65536]; 
+    if(!fgets(line, sizeof line-1, in)) break; 
+    line[65535]=0; 
+    int l = strlen(line);
+    
+    ITERATE_MODES {
+      auto & in = info[i];
+      
+      if (in.needs_reset) {
+        *in.active = *in.template_;
+      }      
+      
+      int s = measure_entropy(line, l, *in.active);   
+      
+      fprintf(out, "%d ", s);
+    }
+    
+    fwrite(line, 1, l, out);
+    fflush(out);
+  }
+}
+
+int main(int argc, char **argv) {
   // Check arguments
   if (argc<3 || argc > 3  ||  !isdigit(argv[1][0]) || !strcmp(argv[1], "--help")) {
     printf(
@@ -1131,8 +1228,8 @@ int main(int argc, char **argv) {
       "\n"
       "To compress:      lpaq1_stream N -c < file > file.lps  (N=0..9, uses 3+3*2^N MB)\n"
       "To decompress:    lpaq1_stream N -d < file.lps > file  (needs same memory)\n"
-      "To analyse lines: lpaq1_stream N --measure < file.txt > file.txt\n"
-      "To analyse lines: lpaq1_stream N --measure2 < file.txt > file.txt\n"
+      "To analyse lines: lpaq1_stream N --analyse=[pPcC] < file.txt > file.txt\n"
+      "                      p - prefeeded; c - clean; P/C - accumulated\n"
       "\n"
       "Each read produces a compressed chunk, \"lpaq1_stream 3 -c | lpaq1_stream 3 -d\" should print your input immediately. \n"
       "\n"
@@ -1157,92 +1254,13 @@ int main(int argc, char **argv) {
     do_decompress(preload, NULL, predictor);
   }
   
-  bool measure = false;
-  if (argc==3 && !strcmp(argv[2], "--measure")) measure = true;
-  
   // Compress
   if (!strcmp(argv[2], "-c")) {
       do_compress(in, out, argv[1][0], predictor);
   } else
-  if (!strcmp(argv[2], "--measure")) {
-    Predictor predictor2(MEM);
-    
-    while(!feof(in)) {
-      char line[65536];
-      if(!fgets(line, sizeof line-1, in)) break;
-      line[65535]=0;
-      
-      int l = strlen(line);
-      
-      ////=========////////
-      predictor2 = predictor;
-      ///=========/////////
-      
-      int s = 0;
-    
-      for (int j=0; j<l; ++j) {
-        for (int i=7; i>=0; --i) {
-          int bit = (line[j]>>i)&1;
-          int prediction = predictor2.p();
-          
-          if (bit) {
-             s += 4096-prediction;
-          } else {
-             s += prediction;
-          }
-        
-          predictor2.update(bit);
-        }
-      }
-      
-      fprintf(stdout, "%d ", s);
-      fwrite(line, 1, l, stdout);
-      fflush(stdout);
-    }
-  } else
-  if (!strcmp(argv[2], "--measure2")) {
-    Predictor predictor2(MEM);
-    Predictor predictor_clean_template(MEM);
-    Predictor predictor_clean(MEM);
-    
-    while(!feof(in)) {
-      char line[65536];
-      if(!fgets(line, sizeof line-1, in)) break;
-      line[65535]=0;
-      
-      int l = strlen(line);
-      
-      ////=========////////
-      predictor2 = predictor;
-      predictor_clean = predictor_clean_template;
-      ///=========/////////
-      
-      int s = 0;
-      int s_clean = 0;
-    
-      for (int j=0; j<l; ++j) {
-        for (int i=7; i>=0; --i) {
-          int bit = (line[j]>>i)&1;
-          int prediction = predictor2.p();
-          int prediction_clean = predictor_clean.p();
-          
-          if (bit) {
-             s += 4096-prediction;
-             s_clean += 4096-prediction_clean;
-          } else {
-             s += prediction;
-             s_clean += prediction_clean;
-          }
-        
-          predictor2.update(bit);
-          predictor_clean.update(bit);
-        }
-      }
-      
-      fprintf(stdout, "%d %d ", s, s_clean);
-      fwrite(line, 1, l, stdout);
-      fflush(stdout);
-    }
+  if (!strncmp(argv[2], "--analyse=", strlen("--analyse="))) {
+      const char* modes = argv[2] + strlen("--analyse=");
+      do_analyse(in, out, modes, predictor, MEM);
   } else
   if (!strcmp(argv[2], "-d")) {
     do_decompress(in, out, predictor);
