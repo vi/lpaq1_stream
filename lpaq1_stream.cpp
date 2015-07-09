@@ -162,7 +162,7 @@ To compile (g++ 3.4.5, upx 3.00w):
 #include <time.h>
 #include <math.h>
 #include <ctype.h>
-#define NDEBUG  // remove for debugging
+//#define NDEBUG  // remove for debugging
 #include <assert.h>
 #include <unistd.h>
 #include <errno.h>
@@ -299,7 +299,7 @@ protected:
   const int N;  // Number of contexts
   int cxt;      // Context of last prediction
   U32 *t;       // cxt -> prediction in high 22 bits, count in low 10 bits
-  static int dt[1024];  // i -> 16K/(i+3)
+  int dt[1024];  // i -> 16K/(i+3)
   void update(int y, int limit) {
     assert(cxt>=0 && cxt<N);
     int n=t[cxt]&1023, p=t[cxt]>>10;  // count, prediction
@@ -309,6 +309,9 @@ protected:
   }
 public:
   StateMap(int n=256);
+  StateMap(const StateMap& sm);
+  ~StateMap();
+  const StateMap& operator= (const StateMap& sm);
 
   // update bit y (0..1), predict next bit in context cx
   int p(int y, int cx, int limit=1023) {
@@ -325,15 +328,32 @@ public:
   }
 };
 
-int StateMap::dt[1024]={0};
 
 StateMap::StateMap(int n): N(n), cxt(0) {
   alloc(t, N);
   for (int i=0; i<N; ++i)
     t[i]=1<<31;
-  if (dt[0]==0)
-    for (int i=0; i<1024; ++i)
-      dt[i]=16384/(i+i+3);
+  for (int i=0; i<1024; ++i)
+    dt[i]=16384/(i+i+3);
+}
+
+StateMap::StateMap(const StateMap& sm) : N(sm.N), cxt(sm.cxt) {
+  alloc(t, N);
+  memmove(t, sm.t, N*sizeof(*t));
+  memmove(dt, sm.dt, sizeof(dt));
+}
+const StateMap& StateMap::operator= (const StateMap& sm) {
+  if (&sm==this) return *this;
+  
+  assert(sm.N == N);
+  cxt = sm.cxt;
+  memmove(t, sm.t, N*sizeof(*t));
+  memmove(dt, sm.dt, sizeof(dt));
+  
+  return *this;
+}
+StateMap::~StateMap() {
+  free(t);
 }
 
 // An APM maps a probability and a context to a new probability.  Methods:
@@ -412,6 +432,9 @@ class Mixer {
   int pr;          // last result (scaled 12 bits)
 public:
   Mixer(int n, int m);
+  Mixer(const Mixer& p);
+  const Mixer& operator= (const Mixer& m);
+  ~Mixer();
 
   // Adjust weights to minimize coding cost of last prediction
   void update(int y) {
@@ -446,6 +469,31 @@ Mixer::Mixer(int n, int m):
   alloc(wx, N*M);
 }
 
+Mixer::Mixer(const Mixer& m):
+    N(m.N), M(m.M), tx(0), wx(0), cxt(m.cxt), nx(m.nx), pr(m.pr) {
+  assert(N>0 && M>0);
+  alloc(tx, N);
+  alloc(wx, N*M);
+  memmove(tx, m.tx, N*sizeof(*tx));
+  memmove(wx, m.wx, N*M*sizeof(*wx));
+}
+const Mixer& Mixer::operator= (const Mixer& m) {
+  if (&m==this) return *this;
+  assert(N == m.N);
+  assert(M == m.M);
+  
+  cxt=m.cxt;
+  nx=m.nx;
+  pr=m.pr;
+  memmove(tx, m.tx, N*sizeof(*tx));
+  memmove(wx, m.wx, N*M*sizeof(*wx));
+  return *this;
+}
+Mixer::~Mixer() {
+  free(tx);
+  free(wx);
+}
+
 //////////////////////////// HashTable /////////////////////////
 
 // A HashTable maps a 32-bit index to an array of B bytes.
@@ -463,8 +511,12 @@ template <int B>
 class HashTable {
   U8* t;  // table: 1 element = B bytes: checksum priority data data
   const int N;  // size in bytes
+  void* orig_address;
 public:
   HashTable(int n);
+  HashTable(const HashTable &t);
+  const HashTable& operator= (const HashTable& c);
+  ~HashTable();
   U8* operator[](U32 i);
 };
 
@@ -473,7 +525,30 @@ HashTable<B>::HashTable(int n): t(0), N(n) {
   assert(B>=2 && (B&B-1)==0);
   assert(N>=B*4 && (N&N-1)==0);
   alloc(t, N+B*4+64);
+  orig_address = t;
   t+=64-int(((long)t)&63);  // align on cache line boundary
+}
+
+template <int B>
+HashTable<B>::HashTable(const HashTable &c) : t(0), N(c.N) {
+  alloc(t, N+B*4+64);
+  orig_address = t;
+  t+=64-int(((long)t)&63);  // align on cache line boundary
+  
+  memmove(t, c.t, (N+B*4)*sizeof(*t));
+}
+
+template <int B>
+const HashTable<B>& HashTable<B>::operator= (const HashTable<B>& c) {
+  if (&c==this) return *this;
+  assert(N==c.N);
+  memmove(t, c.t, (N+B*4)*sizeof(*t));
+  return *this;
+}
+
+template <int B>
+HashTable<B>::~HashTable() {
+  free(orig_address);
 }
 
 template <int B>
@@ -516,6 +591,9 @@ class MatchModel {
   StateMap sm;  // len, bit, last byte -> prediction
 public:
   MatchModel(int n);  // n must be a power of 2 at least 8.
+  MatchModel(const MatchModel &mm);
+  const MatchModel& operator= (const MatchModel& mm);
+  ~MatchModel();
   int p(int y, Mixer& m);  // update bit y (0..1), predict next bit to m
 };
 
@@ -526,6 +604,38 @@ MatchModel::MatchModel(int n): N(n/2-1), HN(n/8-1), buf(0), ht(0), pos(0),
   alloc(ht, HN+1);
 }
 
+MatchModel::MatchModel(const MatchModel &mm): N(mm.N), HN(mm.HN), buf(0), ht(0), 
+  pos(mm.pos), match(mm.match), len(mm.len), h1(mm.h1), h2(mm.h2), c0(mm.c0), bcount(mm.bcount), sm(mm.sm) {
+  alloc(buf, N+1);
+  alloc(ht, HN+1);
+  memmove(buf, mm.buf, N+1);
+  memmove(ht, mm.ht, (HN+1)*sizeof(*ht));
+}
+const MatchModel& MatchModel::operator= (const MatchModel& mm) {
+  if (&mm==this) return *this;
+  
+  assert(N == mm.N);
+  assert(HN == mm.HN);
+  
+  pos = mm.pos;
+  match = mm.match;
+  len = mm.len;
+  h1= mm.h1;
+  h2=(mm.h2);
+  c0=(mm.c0);
+  bcount=(mm.bcount);
+  sm=(mm.sm);
+  
+  memmove(buf, mm.buf, N+1);
+  memmove(ht, mm.ht, (HN+1)*sizeof(*ht));
+  
+  return *this;
+}
+MatchModel::~MatchModel() {
+  free(buf);
+  free(ht);
+}
+  
 int MatchModel::p(int y, Mixer& m) {
 
   // update context
@@ -594,30 +704,98 @@ int MatchModel::p(int y, Mixer& m) {
 // p() returns P(1) as a 12 bit number (0-4095).
 // update(y) trains the predictor with the actual bit (0 or 1).
 
-int MEM=0;  // Global memory usage = 3*MEM bytes (1<<20 .. 1<<29)
-
-class Predictor {
+struct Predictor {
   int pr;  // next prediction
+  
+  int MEM;
+  U8 t0[0x10000];  // order 1 cxt -> state
+  HashTable<16>t;  // cxt -> state
+  int c0;  // last 0-7 bits with leading 1
+  int c4;  // last 4 bytes
+  U8 *cp[6];  // pointer to bit history
+  int bcount;  // bit count
+  StateMap sm[6];
+  APM a1;
+  APM a2;
+  U32 h[6];
+  Mixer m;
+  MatchModel mm;  // predicts next bit by matching context
 public:
-  Predictor();
+  Predictor(int MEM);
+  Predictor(const Predictor& p);
+  const Predictor& operator= (const Predictor& p);
+  ~Predictor();
   int p() const {assert(pr>=0 && pr<4096); return pr;}
   void update(int y);
 };
 
-Predictor::Predictor(): pr(2048) {}
+Predictor::Predictor(int MEM /*Global memory usage = 3*MEM bytes (1<<20 .. 1<<29) */) :
+    MEM(MEM),
+    t0{0},
+    t(MEM*2),
+    c0(1),
+    c4(0),
+    cp{t0, t0, t0, t0, t0, t0},
+    bcount(0),
+    a1(0x100), 
+    a2(0x4000),
+    m(7, 80),
+    mm(MEM),
+    pr(2048) {
+        memset(t0, 0, sizeof(t0));
+        memset(h, 0, sizeof(h));
+}
+
+Predictor::Predictor(const Predictor& p) :
+    MEM(p.MEM),
+    t(p.t),
+    c0(p.c0),
+    c4(p.c4),
+    bcount(p.bcount),
+    sm(p.sm),
+    a1(p.a1), 
+    a2(p.a2),
+    m(p.m),
+    mm(p.mm),
+    pr(p.pr) {
+      memmove(t0, p.t0, sizeof(t0));
+      for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
+        cp[i] = t0 + (p.cp[i] - p.t0);
+      }
+      memmove(h, p.h, sizeof(h));
+}
+
+const Predictor& Predictor::operator= (const Predictor& p) {
+  if (&p==this) return *this;
+  
+  t = p.t;
+  c0 = p.c0;
+  c4 = p.c4;
+  bcount = p.bcount;
+  for (int i = 0; i < sizeof(sm)/sizeof(*sm); ++i) {
+    sm[i] = p.sm[i];
+  }
+  a1 = p.a1;
+  a2 = p.a2;
+  m = p.m;
+  mm = p.mm;
+  pr = p.pr;
+  
+  memmove(t0, p.t0, sizeof(t0));
+  for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
+    cp[i] = t0 + (p.cp[i] - p.t0);
+  }
+  memmove(h, p.h, sizeof(h));
+  
+  return *this;
+}
+
+Predictor::~Predictor() {
+  
+}
+
 
 void Predictor::update(int y) {
-  static U8 t0[0x10000];  // order 1 cxt -> state
-  static HashTable<16> t(MEM*2);  // cxt -> state
-  static int c0=1;  // last 0-7 bits with leading 1
-  static int c4=0;  // last 4 bytes
-  static U8 *cp[6]={t0, t0, t0, t0, t0, t0};  // pointer to bit history
-  static int bcount=0;  // bit count
-  static StateMap sm[6];
-  static APM a1(0x100), a2(0x4000);
-  static U32 h[6];
-  static Mixer m(7, 80);
-  static MatchModel mm(MEM);  // predicts next bit by matching context
   assert(MEM>0);
 
   // update model
@@ -840,27 +1018,17 @@ void Encoder::flush() {
 
 unsigned char buffer[0x3EFE]; // don't increase the length without thinking
 
-void do_checkmem(unsigned char mem, bool checkmem) {
-  int m=1<<(mem-'0'+20);
-  if (checkmem) {
-    if (MEM!=m) {
-      quit("LPAQ_PRELOAD_FILE memory mode mismatch");
-    }
-  } else {
-    MEM=m;
-  }
+int getmem(unsigned char mem) {
+  return 1<<(mem-'0'+20);
 }
 
-void do_compress(FILE* in, FILE* out, unsigned char mem, bool checkmem, Predictor& predictor) {
-    do_checkmem(mem, checkmem);
-
+void do_compress(FILE* in, FILE* out, unsigned char mem, Predictor& predictor) {
     fprintf(out, "pQS%c", mem);
     fflush(out);
 
     for(;;) {
-      int ret = read(0, &buffer, sizeof buffer);
+      int ret = fread(&buffer, 1, sizeof buffer, in);
       if (ret==0 || ret==-1) {
-        if (errno==EINTR || errno==EAGAIN) continue;
         break;
       }
       
@@ -907,7 +1075,7 @@ void do_compress(FILE* in, FILE* out, unsigned char mem, bool checkmem, Predicto
     }
 }
 
-void do_decompress(FILE* in, FILE* out, bool checkmem, Predictor& predictor) {
+void do_decompress(FILE* in, FILE* out, Predictor& predictor) {
     // Check header version, get memory option, file size
     if (getc(in)!='p' || getc(in)!='Q' || getc(in)!='S')
       quit("Not a lpaq1_stream file");
@@ -915,7 +1083,8 @@ void do_decompress(FILE* in, FILE* out, bool checkmem, Predictor& predictor) {
     {
       int m = getc(in);
       if (m<'0' || m>'9') quit("Bad memory option (not 0..9)");
-      do_checkmem(m, checkmem);
+      int MEM2 = getmem(m);
+      assert(MEM2 == predictor.MEM);
     }
 
     for (;;) {
@@ -954,16 +1123,18 @@ void do_decompress(FILE* in, FILE* out, bool checkmem, Predictor& predictor) {
 int main(int argc, char **argv) {
 
   // Check arguments
-  if (argc!=2 || !strcmp(argv[1], "--help")) {
+  if (argc<3 || argc > 3  ||  !isdigit(argv[1][0]) || !strcmp(argv[1], "--help")) {
     printf(
       "lpaq1 file compressor (C) 2007, Matt Mahoney\n"
       "Licensed under GPL, http://www.gnu.org/copyleft/gpl.html\n"
       "Stream version by _Vi (http://vi-server.org)\n"
       "\n"
-      "To compress:   lpaq1_stream N < file > file.lps  (N=0..9, uses 3+3*2^N MB)\n"
-      "To decompress: lpaq1_stream -d < file.lps > file  (needs same memory)\n"
+      "To compress:      lpaq1_stream N -c < file > file.lps  (N=0..9, uses 3+3*2^N MB)\n"
+      "To decompress:    lpaq1_stream N -d < file.lps > file  (needs same memory)\n"
+      "To analyse lines: lpaq1_stream N --measure < file.txt > file.txt\n"
+      "To analyse lines: lpaq1_stream N --measure2 < file.txt > file.txt\n"
       "\n"
-      "Each read produces a compressed chunk, \"lpaq1_stream 3 | lpaq1_stream -d\" should print your input immediately. \n"
+      "Each read produces a compressed chunk, \"lpaq1_stream 3 -c | lpaq1_stream 3 -d\" should print your input immediately. \n"
       "\n"
       "Set LPAQ_PRELOAD_FILE to initialize predictor with the specified lpaq1_stream-compressed file.\n");
     return 1;
@@ -976,27 +1147,109 @@ int main(int argc, char **argv) {
   FILE *in = stdin;
   FILE *out = stdout;
 
-  Predictor predictor;
-  
-  bool checkmem = false;
+  int MEM = getmem(argv[1][0]);
+
+  Predictor predictor(MEM);
   
   if (getenv("LPAQ_PRELOAD_FILE")) {
     FILE* preload = fopen(getenv("LPAQ_PRELOAD_FILE"), "rb");
     if(!preload) quit("Can't open LPAQ_PRELOAD_FILE file");
-    do_decompress(preload, NULL, false, predictor);
-    checkmem = true;
+    do_decompress(preload, NULL, predictor);
   }
   
+  bool measure = false;
+  if (argc==3 && !strcmp(argv[2], "--measure")) measure = true;
+  
   // Compress
-  if (isdigit(argv[1][0])) {
-    do_compress(in, out, argv[1][0], checkmem, predictor);
-  }
-  // Decompress
-  else {    
-    do_decompress(in, out, checkmem, predictor);
+  if (!strcmp(argv[2], "-c")) {
+      do_compress(in, out, argv[1][0], predictor);
+  } else
+  if (!strcmp(argv[2], "--measure")) {
+    Predictor predictor2(MEM);
+    
+    while(!feof(in)) {
+      char line[65536];
+      if(!fgets(line, sizeof line-1, in)) break;
+      line[65535]=0;
+      
+      int l = strlen(line);
+      
+      ////=========////////
+      predictor2 = predictor;
+      ///=========/////////
+      
+      int s = 0;
+    
+      for (int j=0; j<l; ++j) {
+        for (int i=7; i>=0; --i) {
+          int bit = (line[j]>>i)&1;
+          int prediction = predictor2.p();
+          
+          if (bit) {
+             s += 4096-prediction;
+          } else {
+             s += prediction;
+          }
+        
+          predictor2.update(bit);
+        }
+      }
+      
+      fprintf(stdout, "%d ", s);
+      fwrite(line, 1, l, stdout);
+      fflush(stdout);
+    }
+  } else
+  if (!strcmp(argv[2], "--measure2")) {
+    Predictor predictor2(MEM);
+    Predictor predictor_clean_template(MEM);
+    Predictor predictor_clean(MEM);
+    
+    while(!feof(in)) {
+      char line[65536];
+      if(!fgets(line, sizeof line-1, in)) break;
+      line[65535]=0;
+      
+      int l = strlen(line);
+      
+      ////=========////////
+      predictor2 = predictor;
+      predictor_clean = predictor_clean_template;
+      ///=========/////////
+      
+      int s = 0;
+      int s_clean = 0;
+    
+      for (int j=0; j<l; ++j) {
+        for (int i=7; i>=0; --i) {
+          int bit = (line[j]>>i)&1;
+          int prediction = predictor2.p();
+          int prediction_clean = predictor_clean.p();
+          
+          if (bit) {
+             s += 4096-prediction;
+             s_clean += 4096-prediction_clean;
+          } else {
+             s += prediction;
+             s_clean += prediction_clean;
+          }
+        
+          predictor2.update(bit);
+          predictor_clean.update(bit);
+        }
+      }
+      
+      fprintf(stdout, "%d %d ", s, s_clean);
+      fwrite(line, 1, l, stdout);
+      fflush(stdout);
+    }
+  } else
+  if (!strcmp(argv[2], "-d")) {
+    do_decompress(in, out, predictor);
+  } else {
+    fprintf(stderr, "Unknown mode %s\n", argv[2]);
+    return 1;  
   }
 
   return 0;
 }
-
-
