@@ -7,6 +7,7 @@ Here are some funny modes to it to play with the compression:
 
 * lpaq1_stream: Other archive format, suitable for intermediate flushing;
 * lpaq1_stream: "Preloading" of other archives to assist compression of little files;
+* lpaq1_stream: "Analyse" mode for ouputting entropy of each line. With pre-loaded file it can regognise "familiar" lines from new ones.
 * lpaq1: Removed filesize restriction (now can [de]compress to/from pipe);
 * lpaq1: "Stream decompress mode" to extract files with unknown filesize (with some garbade at the end);
 * lpaq1: Fuzz decompression (deliverately misdecompress files to see broken content);
