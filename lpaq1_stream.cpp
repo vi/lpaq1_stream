@@ -531,7 +531,7 @@ void do_fantasy(FILE* in, FILE* out, BitPredictor& predictor, int length, int ME
 {
   BitPredictor p(MEM);
   
-  int gap = 128;
+  int gap = 1024;
   if (getenv("GAP")) gap=atoi(getenv("GAP"));
   
   while(!feof(in)) { 
@@ -564,7 +564,7 @@ void do_fantasy(FILE* in, FILE* out, BitPredictor& predictor, int length, int ME
         } else if (prediction < 2048-gap) {
           bit=0;
         } else {
-          bit = rand() > RAND_MAX/2 ? 1 : 0;
+          bit = rand() < RAND_MAX/4096*prediction ? 1 : 0;
         }
         
         p.update(bit);
