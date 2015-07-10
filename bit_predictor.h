@@ -14,7 +14,8 @@ public:
   BitPredictor& operator= (const BitPredictor& p);
   ~BitPredictor();
   void save(FILE* f);
-  void load(FILE* f);
+  void load(FILE* f); // in-place load, without reallocations
+  BitPredictor(FILE* f); // load, allocating memory
   
 private:
   Predictor* impl;

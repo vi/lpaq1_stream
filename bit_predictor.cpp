@@ -625,7 +625,7 @@ public:
   const Predictor& operator= (const Predictor& p);
   ~Predictor();
   void save(FILE* f);
-  void load(FILE* f);
+  void load(FILE* f, bool checkmem);
   
   int p() const {assert(pr>=0 && pr<4096); return pr;}
   void update(int y);
@@ -738,9 +738,12 @@ void Predictor::save(FILE* f) {
   }
   SIGNATURE(0x9999)
 }
-void Predictor::load(FILE* f) {
-  CHECKSIG(991221)
-  DSERC(MEM) DSER(t0) DSER(c0) DSER(c4) DSER(bcount)
+void Predictor::load(FILE* f, bool checkmem) {
+  if (checkmem) {
+    CHECKSIG(991221)
+    DSERC(MEM)
+  }
+  DSER(t0) DSER(c0) DSER(c4) DSER(bcount)
   t.load(f);
   for (int i = 0; i < sizeof(sm)/sizeof(*sm); ++i) {
     sm[i].load(f);
@@ -866,7 +869,17 @@ BitPredictor::~BitPredictor() {
 }
 
 void BitPredictor::save(FILE* f) { impl->save(f); }
-void BitPredictor::load(FILE* f) { impl->load(f); }
+void BitPredictor::load(FILE* f) { impl->load(f, true); }
+
+BitPredictor::BitPredictor(FILE* f) : impl(NULL) {
+  int MEM;
+  
+  CHECKSIG(991221)
+  DSER(MEM);
+  
+  impl = new Predictor(MEM);
+  impl->load(f, false);
+}
 
 void BitPredictor::update(int y) {
   impl->update(y);
