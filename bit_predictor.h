@@ -13,6 +13,9 @@ public:
   BitPredictor(const BitPredictor& p);
   BitPredictor& operator= (const BitPredictor& p);
   ~BitPredictor();
+  void save(FILE* f);
+  void load(FILE* f);
+  
 private:
   Predictor* impl;
 };

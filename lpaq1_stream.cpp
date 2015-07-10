@@ -591,13 +591,14 @@ int main(int argc, char **argv) {
       "To compress:      lpaq1_stream N -c < file > file.lps  (N=0..9, uses 3+3*2^N MB)\n"
       "To decompress:    lpaq1_stream N -d < file.lps > file  (needs same memory)\n"
       "To analyse lines: lpaq1_stream N --analyse=[pPcC] < file.txt > file.txt\n"
-      "                      p - prefeeded (see PRELOAD); c - clean; P/C - accumulated\n"
+      "                      p - prefeeded (see PRELOAD or LOAD); c - clean; P/C - accumulated\n"
       "To 'guess' continuations of lines: lpaq1_stream N --fantasy=length < file.txt > file.txt\n"
-      "                      (useless without PRELOAD)\n"
+      "                      (useless without PRELOAD or LOAD)\n"
       "\n"
       "Each read produces a compressed chunk, \"lpaq1_stream 3 -c | lpaq1_stream 3 -d\" should print your input immediately. \n"
       "\n"
-      "Set PRELOAD to initialize predictor with the specified lpaq1_stream-compressed file.\n");
+      "Set PRELOAD to initialize predictor with the specified lpaq1_stream-compressed file.\n"
+      "Set LOAD to load predictor state before working, SAVE to save it after working.\n");
     return 1;
   }
 
@@ -611,6 +612,8 @@ int main(int argc, char **argv) {
   int MEM = getmem(argv[1][0]);
 
   BitPredictor predictor(MEM);
+  
+  if (getenv("LOAD")) { FILE* f = fopen(getenv("LOAD"), "rb"); predictor.load(f); }
   
   if (getenv("PRELOAD")) {
     FILE* preload = fopen(getenv("PRELOAD"), "rb");
@@ -635,6 +638,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Unknown mode %s\n", argv[2]);
     return 1;  
   }
+  
+  if (getenv("SAVE")) { FILE* f = fopen(getenv("SAVE"), "wb"); predictor.save(f); }
 
   return 0;
 }

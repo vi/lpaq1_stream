@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,6 +153,8 @@ public:
   StateMap(const StateMap& sm);
   ~StateMap();
   const StateMap& operator= (const StateMap& sm);
+  void save(FILE* f);
+  void load(FILE* f);
 
   // update bit y (0..1), predict next bit in context cx
   int p(int y, int cx, int limit=1023) {
@@ -196,6 +197,24 @@ const StateMap& StateMap::operator= (const StateMap& sm) {
 }
 StateMap::~StateMap() {
   free(t);
+}
+
+#define SIGNATURE(x) { int signature=x; fwrite(&signature, sizeof(signature), 1, f); }
+#define SER(x)    fwrite(&x, sizeof(x), 1, f);
+#define SERN(x,n) fwrite(&x, sizeof(x), n, f);
+
+#define CHECKSIG(x) { int signature; fread(&signature, sizeof(signature), 1, f); assert(signature==x); }
+#define DSERC(v) { int x=-1; fread(&x, sizeof(x), 1, f); assert(v==x); }
+#define DSER(x)  fread(&x, sizeof(x), 1, f);
+#define DSERN(x, n) fread(&x, sizeof(x), n, f);
+
+void StateMap::save(FILE* f) {
+  SIGNATURE(55)
+  SER(N) SER(cxt) SER(dt) SERN(*t, N)
+}
+void StateMap::load(FILE* f) {
+  CHECKSIG(55)
+  DSERC(N) DSER(cxt) DSER(dt) DSERN(*t, N)
 }
 
 // An APM maps a probability and a context to a new probability.  Methods:
@@ -277,6 +296,8 @@ public:
   Mixer(const Mixer& p);
   const Mixer& operator= (const Mixer& m);
   ~Mixer();
+  void save(FILE* f);
+  void load(FILE* f);
 
   // Adjust weights to minimize coding cost of last prediction
   void update(int y) {
@@ -335,6 +356,14 @@ Mixer::~Mixer() {
   free(tx);
   free(wx);
 }
+void Mixer::save(FILE* f) {
+  SIGNATURE(56)
+  SER(N) SER(M) SERN(*tx, N) SERN(*wx, N*M) SER(cxt) SER(nx) SER(pr)
+}
+void Mixer::load(FILE* f) {
+  CHECKSIG(56)
+  DSERC(N) DSERC(M) DSERN(*tx, N) DSERN(*wx, N*M) DSER(cxt) DSER(nx) DSER(pr)
+}
 
 //////////////////////////// HashTable /////////////////////////
 
@@ -359,6 +388,9 @@ public:
   HashTable(const HashTable &t);
   const HashTable& operator= (const HashTable& c);
   ~HashTable();
+  void save(FILE* f);
+  void load(FILE* f);
+  
   U8* operator[](U32 i);
 };
 
@@ -391,6 +423,18 @@ const HashTable<B>& HashTable<B>::operator= (const HashTable<B>& c) {
 template <int B>
 HashTable<B>::~HashTable() {
   free(orig_address);
+}
+
+template <int B>
+void HashTable<B>::save(FILE* f) {
+  SIGNATURE(B)
+  SER(N) SERN(*t, N+B*4)
+}
+
+template <int B>
+void HashTable<B>::load(FILE* f) {
+  CHECKSIG(B)
+  DSERC(N) DSERN(*t, N+B*4)
 }
 
 template <int B>
@@ -436,6 +480,9 @@ public:
   MatchModel(const MatchModel &mm);
   const MatchModel& operator= (const MatchModel& mm);
   ~MatchModel();
+  void save(FILE* f);
+  void load(FILE* f);
+  
   int p(int y, Mixer& m);  // update bit y (0..1), predict next bit to m
 };
 
@@ -476,6 +523,15 @@ const MatchModel& MatchModel::operator= (const MatchModel& mm) {
 MatchModel::~MatchModel() {
   free(buf);
   free(ht);
+}
+
+void MatchModel::save(FILE* f) {
+  SIGNATURE(88334)
+  SER(N) SER(HN) SERN(*buf, N+1) SERN(*ht, HN+1) SER(pos) SER(match) SER(len) SER(h1) SER(h2) SER(c0) SER(bcount) sm.save(f);
+}
+void MatchModel::load(FILE* f) {
+  CHECKSIG(88334)
+  DSERC(N) DSERC(HN) DSERN(*buf, N+1) DSERN(*ht, HN+1) DSER(pos) DSER(match) DSER(len) DSER(h1) DSER(h2) DSER(c0) DSER(bcount) sm.load(f);
 }
   
 int MatchModel::p(int y, Mixer& m) {
@@ -568,6 +624,9 @@ public:
   void rebase_pointers(const Predictor& p);
   const Predictor& operator= (const Predictor& p);
   ~Predictor();
+  void save(FILE* f);
+  void load(FILE* f);
+  
   int p() const {assert(pr>=0 && pr<4096); return pr;}
   void update(int y);
 };
@@ -595,6 +654,8 @@ void Predictor::rebase_pointers(const Predictor& p) {
     } else 
     if (p.cp[i] >= p.t.t && p.cp[i] < p.t.t + (MEM*2+16*4)) {
         cp[i] = t.t + (p.cp[i] - p.t.t);
+    } else {
+      assert(!"Invalid pointer");
     }
   }
 }
@@ -645,6 +706,69 @@ Predictor::~Predictor() {
   
 }
 
+void Predictor::save(FILE* f) {
+  SIGNATURE(991221)
+  SER(MEM) SER(t0) SER(c0) SER(c4) SER(bcount)
+  t.save(f);
+  for (int i = 0; i < sizeof(sm)/sizeof(*sm); ++i) {
+    sm[i].save(f);
+  }
+  SIGNATURE(1886)
+  a1.save(f);
+  a2.save(f);
+  SER(h) 
+  SIGNATURE(8338)
+  m.save(f);
+  mm.save(f);
+  SIGNATURE(1221)
+  for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
+    int type;
+    int offset;
+    if (cp[i] >= t0 && cp[i] < t0 + sizeof(t0)) {
+      type = 34;
+      offset = (cp[i] - t0);
+    } else 
+    if (cp[i] >= t.t && cp[i] < t.t + (MEM*2+16*4)) {
+      type = 12;
+      offset = (cp[i] - t.t);
+    } else {
+      assert(!"Invalid pointer");
+    }
+    SER(type) SER(offset)
+  }
+  SIGNATURE(0x9999)
+}
+void Predictor::load(FILE* f) {
+  CHECKSIG(991221)
+  DSERC(MEM) DSER(t0) DSER(c0) DSER(c4) DSER(bcount)
+  t.load(f);
+  for (int i = 0; i < sizeof(sm)/sizeof(*sm); ++i) {
+    sm[i].load(f);
+  }
+  CHECKSIG(1886)
+  a1.load(f);
+  a2.load(f);
+  DSER(h) 
+  CHECKSIG(8338)
+  m.load(f);
+  mm.load(f);
+  CHECKSIG(1221)
+  for (int i = 0; i < sizeof(cp)/sizeof(*cp); ++i) {
+    int type;
+    int offset;
+    DSER(type);
+    DSER(offset);
+    if (type == 34) {
+      cp[i] = t0 + offset;
+    } else 
+    if (type == 12) {
+      cp[i] = t.t + offset;
+    } else {
+      assert(!"Invalid type");
+    }
+  }
+  CHECKSIG(0x9999)
+}
 
 void Predictor::update(int y) {
   assert(MEM>0);
@@ -740,6 +864,9 @@ BitPredictor& BitPredictor::operator= (const BitPredictor& p) {
 BitPredictor::~BitPredictor() {
   delete impl;
 }
+
+void BitPredictor::save(FILE* f) { impl->save(f); }
+void BitPredictor::load(FILE* f) { impl->load(f); }
 
 void BitPredictor::update(int y) {
   impl->update(y);
