@@ -459,7 +459,7 @@ int measure_entropy(const char* buf, int l, BitPredictor& p) {
   return s;
 }
 
-void do_analyse(FILE* in, FILE* out, const char* modes, BitPredictor& predictor, int MEM) {
+void do_analyse(FILE* in, FILE* out, const char* modes, BitPredictor& predictor, int filter_mode, int MEM) {
   struct {
     BitPredictor* template_;
     BitPredictor* active;
@@ -504,6 +504,9 @@ void do_analyse(FILE* in, FILE* out, const char* modes, BitPredictor& predictor,
     }
   }
   
+  bool negative_filter = false;
+  if (filter_mode < 0) { filter_mode = -filter_mode; negative_filter = true; }
+  
   while(!feof(in)) { 
     char line[65536]; 
     if(!fgets(line, sizeof line-1, in)) break; 
@@ -517,13 +520,24 @@ void do_analyse(FILE* in, FILE* out, const char* modes, BitPredictor& predictor,
         *in.active = *in.template_;
       }      
       
-      int s = measure_entropy(line, l, *in.active);   
+      in.s = measure_entropy(line, l, *in.active);   
       
-      fprintf(out, "%d ", s);
+      if (filter_mode==-1) {
+        fprintf(out, "%d ", in.s);
+      }
     }
     
-    fwrite(line, 1, l, out);
-    fflush(out);
+    bool do_output = true;
+    
+    if (filter_mode != -1) {
+      if (info[1].s  > ((unsigned long long)filter_mode) * info[0].s / 1000) do_output = false;
+      if (negative_filter) do_output = ! do_output;
+    }
+    
+    if (do_output) {
+      fwrite(line, 1, l, out);
+      fflush(out);
+    }
   }
 }
 
@@ -592,6 +606,8 @@ int main(int argc, char **argv) {
       "To decompress:    lpaq1_stream N -d < file.lps > file  (needs same memory)\n"
       "To analyse lines: lpaq1_stream N --analyse=[pPcC] < file.txt > file.txt\n"
       "                      p - prefeeded (see PRELOAD or LOAD); c - clean; P/C - accumulated\n"
+      "To filter lines:  lpaq1_stream N --filter=5000 < file.txt > file.txt\n"
+      "                      (useless without PRELOAD or LOAD, argument is per millis, negative for inclusive filtering)\n"
       "To 'guess' continuations of lines: lpaq1_stream N --fantasy=length < file.txt > file.txt\n"
       "                      (useless without PRELOAD or LOAD)\n"
       "\n"
@@ -627,7 +643,10 @@ int main(int argc, char **argv) {
   } else
   if (!strncmp(argv[2], "--analyse=", strlen("--analyse="))) {
       const char* modes = argv[2] + strlen("--analyse=");
-      do_analyse(in, out, modes, predictor, MEM);
+      do_analyse(in, out, modes, predictor, -1, MEM);
+  } else
+  if (!strncmp(argv[2], "--filter=", strlen("--filter="))) {
+      do_analyse(in, out, "pc", predictor, atoi(argv[2] + strlen("--filter=")), MEM);
   } else
   if (!strncmp(argv[2], "--fantasy=", strlen("--fantasy="))) {
       do_fantasy(in, out, predictor, atoi(argv[2]+strlen("--fantasy=")), MEM);
