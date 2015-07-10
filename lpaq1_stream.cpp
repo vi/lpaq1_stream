@@ -591,13 +591,13 @@ int main(int argc, char **argv) {
       "To compress:      lpaq1_stream N -c < file > file.lps  (N=0..9, uses 3+3*2^N MB)\n"
       "To decompress:    lpaq1_stream N -d < file.lps > file  (needs same memory)\n"
       "To analyse lines: lpaq1_stream N --analyse=[pPcC] < file.txt > file.txt\n"
-      "                      p - prefeeded (see LPAQ_PRELOAD_FILE); c - clean; P/C - accumulated\n"
+      "                      p - prefeeded (see PRELOAD); c - clean; P/C - accumulated\n"
       "To 'guess' continuations of lines: lpaq1_stream N --fantasy=length < file.txt > file.txt\n"
-      "                      (useless without LPAQ_PRELOAD_FILE)\n"
+      "                      (useless without PRELOAD)\n"
       "\n"
       "Each read produces a compressed chunk, \"lpaq1_stream 3 -c | lpaq1_stream 3 -d\" should print your input immediately. \n"
       "\n"
-      "Set LPAQ_PRELOAD_FILE to initialize predictor with the specified lpaq1_stream-compressed file.\n");
+      "Set PRELOAD to initialize predictor with the specified lpaq1_stream-compressed file.\n");
     return 1;
   }
 
@@ -612,9 +612,9 @@ int main(int argc, char **argv) {
 
   BitPredictor predictor(MEM);
   
-  if (getenv("LPAQ_PRELOAD_FILE")) {
-    FILE* preload = fopen(getenv("LPAQ_PRELOAD_FILE"), "rb");
-    if(!preload) quit("Can't open LPAQ_PRELOAD_FILE file");
+  if (getenv("PRELOAD")) {
+    FILE* preload = fopen(getenv("PRELOAD"), "rb");
+    if(!preload) quit("Can't open PRELOAD file");
     do_decompress(preload, NULL, predictor);
   }
   
