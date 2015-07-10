@@ -527,6 +527,59 @@ void do_analyse(FILE* in, FILE* out, const char* modes, BitPredictor& predictor,
   }
 }
 
+void do_fantasy(FILE* in, FILE* out, BitPredictor& predictor, int length, int MEM)
+{
+  BitPredictor p(MEM);
+  
+  int gap = 128;
+  if (getenv("GAP")) gap=atoi(getenv("GAP"));
+  
+  while(!feof(in)) { 
+    char line[65536]; 
+    if(!fgets(line, sizeof line-1, in)) break; 
+    line[65535]=0; 
+    int l = strlen(line)-1;
+    line[l]=0; // trim '\n'
+    
+    p = predictor;
+    
+    for (int j=0; j<l; ++j) {
+      for (int i=7; i>=0; --i) {
+        int bit = (line[j]>>i)&1;      
+        p.update(bit);
+      }
+    }
+    
+    fwrite(line, 1, l, out);
+    
+    for (int j=0; j<length; ++j) {
+      unsigned char c = 0;
+      for (int i=7; i>=0; --i) {
+        
+        int prediction = p.p();
+        
+        int bit;
+        if        (prediction > 2048+gap) {
+          bit=1;  
+        } else if (prediction < 2048-gap) {
+          bit=0;
+        } else {
+          bit = rand() > RAND_MAX/2 ? 1 : 0;
+        }
+        
+        p.update(bit);
+        
+        c<<=1;
+        c|=bit;
+      }
+      fputc(c, out);
+    }
+    
+    fprintf(out, "\n");
+    fflush(out);
+  }
+}
+
 int main(int argc, char **argv) {
   // Check arguments
   if (argc<3 || argc > 3  ||  !isdigit(argv[1][0]) || !strcmp(argv[1], "--help")) {
@@ -538,7 +591,9 @@ int main(int argc, char **argv) {
       "To compress:      lpaq1_stream N -c < file > file.lps  (N=0..9, uses 3+3*2^N MB)\n"
       "To decompress:    lpaq1_stream N -d < file.lps > file  (needs same memory)\n"
       "To analyse lines: lpaq1_stream N --analyse=[pPcC] < file.txt > file.txt\n"
-      "                      p - prefeeded; c - clean; P/C - accumulated\n"
+      "                      p - prefeeded (see LPAQ_PRELOAD_FILE); c - clean; P/C - accumulated\n"
+      "To 'guess' continuations of lines: lpaq1_stream N --fantasy=length < file.txt > file.txt\n"
+      "                      (useless without LPAQ_PRELOAD_FILE)\n"
       "\n"
       "Each read produces a compressed chunk, \"lpaq1_stream 3 -c | lpaq1_stream 3 -d\" should print your input immediately. \n"
       "\n"
@@ -570,6 +625,9 @@ int main(int argc, char **argv) {
   if (!strncmp(argv[2], "--analyse=", strlen("--analyse="))) {
       const char* modes = argv[2] + strlen("--analyse=");
       do_analyse(in, out, modes, predictor, MEM);
+  } else
+  if (!strncmp(argv[2], "--fantasy=", strlen("--fantasy="))) {
+      do_fantasy(in, out, predictor, atoi(argv[2]+strlen("--fantasy=")), MEM);
   } else
   if (!strcmp(argv[2], "-d")) {
     do_decompress(in, out, predictor);
