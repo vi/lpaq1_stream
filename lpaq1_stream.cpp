@@ -522,14 +522,14 @@ void do_analyse(FILE* in, FILE* out, const char* modes, BitPredictor& predictor,
       
       in.s = measure_entropy(line, l, *in.active);   
       
-      if (filter_mode==-1) {
+      if (filter_mode == 0) {
         fprintf(out, "%d ", in.s);
       }
     }
     
     bool do_output = true;
     
-    if (filter_mode != -1) {
+    if (filter_mode != 0) {
       if (info[1].s  > ((unsigned long long)filter_mode) * info[0].s / 1000) do_output = false;
       if (negative_filter) do_output = ! do_output;
     }
@@ -643,7 +643,7 @@ int main(int argc, char **argv) {
   } else
   if (!strncmp(argv[2], "--analyse=", strlen("--analyse="))) {
       const char* modes = argv[2] + strlen("--analyse=");
-      do_analyse(in, out, modes, predictor, -1, MEM);
+      do_analyse(in, out, modes, predictor, 0, MEM);
   } else
   if (!strncmp(argv[2], "--filter=", strlen("--filter="))) {
       do_analyse(in, out, "pc", predictor, atoi(argv[2] + strlen("--filter=")), MEM);
